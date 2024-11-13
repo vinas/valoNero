@@ -3,8 +3,8 @@
 #include "ButtonClass.h"
 
 const int AMOUNT_OF_STATIONS = 4,
-  AMOUNT_OF_PHASES = 6,
-  PHASE_BLOCK = 15,
+  AMOUNT_OF_PHASES = 10,
+  PHASE_BLOCK = 10,
   STATIONS[4][2] = {
     {4, 5},
     {6, 7},
@@ -15,11 +15,11 @@ const int AMOUNT_OF_STATIONS = 4,
 unsigned const int LIGHT_TIME_RANGE[2] = {200, 1000};
 
 int currentTarget,
-  currentLap = 0,
-  targets[999],
-  hits[999],
-  variabilityRate = (LIGHT_TIME_RANGE[1] - LIGHT_TIME_RANGE[0]) / AMOUNT_OF_PHASES,
-  phase = 1;
+  currentLightLap = 0,
+  currentButtonLap = 0,
+  targets[500],
+  lastHit = -1,
+  variabilityRate = (LIGHT_TIME_RANGE[1] - LIGHT_TIME_RANGE[0]) / AMOUNT_OF_PHASES;
 
 bool gameOn = false,
   lightOn = false,
@@ -45,6 +45,10 @@ void blinkAllLights();
 void handleStartButton();
 void sortTarget();
 void initRandomSeed();
+int setVariableLightTime();
+void handleGameLights();
+void handleGameButtons();
+void resetGameProps();
 
 void setup() {
   initPins();
@@ -58,34 +62,17 @@ void setup() {
 void loop() {
   handleStartButton();
   if (gameOn) {
-    if (!lightOn) {
-      sortTarget();
-      targets[currentLap] = currentTarget;
-      digitalWrite(STATIONS[currentTarget][1], HIGH);
-      lightStartingTime = millis();
-      lightOn = true;
-    } else {
-      if (!isVariableLightTimeSet) {
-        if (currentLap == 0) {
-          variableLightTime = LIGHT_TIME_RANGE[1];
-        } else {
-          if (currentLap > PHASE_BLOCK * AMOUNT_OF_PHASES) {
-            variableLightTime = LIGHT_TIME_RANGE[0];
-          } else if ((currentLap * phase) % PHASE_BLOCK == 0) {
-            Serial.println();
-            Serial.println(currentLap);
-            variableLightTime = variableLightTime - variabilityRate;
-          }
-        }
-        isVariableLightTimeSet = true;
+    handleGameLights();
+    handleGameButtons();
+
+    if (lastHit > -1) {
+      if (targets[currentButtonLap] != lastHit) {
+        resetGameProps();
+        blinkAllLights();
+        return;
       }
-      if (millis() - lightStartingTime > variableLightTime) {
-        digitalWrite(STATIONS[currentTarget][1], LOW);
-        lightOn = false;
-        lightStartingTime = 0;
-        currentLap++;
-        isVariableLightTimeSet = false;
-      }
+      lastHit = -1;
+      currentButtonLap++;
     }
   }
 }
@@ -152,7 +139,12 @@ void blinkAllLights() {
 void handleStartButton() {
   startButton.read();
   if (startButton.wasPressed()) {
-    gameOn = !gameOn;
+    if (gameOn) {
+      blinkAllLights();
+      resetGameProps();
+      return;
+    }
+    gameOn = true;
   }
 }
 
@@ -169,4 +161,59 @@ void initRandomSeed() {
   EEPROM.get(address, seed);
   randomSeed(seed);
   EEPROM.put(address, seed + 1);
+}
+
+int setVariableLightTime() {
+  if (currentLightLap == 0) {
+    return LIGHT_TIME_RANGE[1];
+  }
+  if (currentLightLap > PHASE_BLOCK * AMOUNT_OF_PHASES) {
+    return LIGHT_TIME_RANGE[0];
+  }
+  if (currentLightLap % PHASE_BLOCK == 0) {
+    return variableLightTime - variabilityRate;
+  }
+  return variableLightTime;
+}
+
+void handleGameLights() {
+  if (!lightOn) {
+    sortTarget();
+    targets[currentLightLap] = currentTarget;
+    digitalWrite(STATIONS[currentTarget][1], HIGH);
+    lightStartingTime = millis();
+    lightOn = true;
+  } else {
+    if (!isVariableLightTimeSet) {
+      variableLightTime = setVariableLightTime();
+      isVariableLightTimeSet = true;
+    }
+    if (millis() - lightStartingTime > variableLightTime) {
+      digitalWrite(STATIONS[currentTarget][1], LOW);
+      lightOn = false;
+      lightStartingTime = 0;
+      currentLightLap++;
+      isVariableLightTimeSet = false;
+    }
+  }
+}
+
+void handleGameButtons() {
+  for (int i = 0; i < AMOUNT_OF_STATIONS; i++) {
+    gameButtons[i].read();
+    if (gameButtons[i].wasPressed()) {
+      lastHit = i;
+    }
+  }
+}
+
+void resetGameProps() {
+  gameOn = false;
+  lightOn = false;
+  isVariableLightTimeSet = false;
+  variableLightTime = 0;
+  lightStartingTime = 0;
+  currentLightLap = 0;
+  currentButtonLap = 0;
+  lastHit = -1;
 }
