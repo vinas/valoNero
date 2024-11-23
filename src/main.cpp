@@ -15,12 +15,11 @@ const int AMOUNT_OF_STATIONS = 4,
 
 int lightLap,
   buttonLap,
-  targets[MAX_RESULTS],
-  lastHit;
+  targets[MAX_RESULTS];
 
 bool gameOn, lightOn;
 
-unsigned long nextLightChange, lightTimeStart;
+unsigned long lightTimeStart;
 
 Button startButton(START_BTN_PIN);
 
@@ -39,16 +38,13 @@ void handleStartButtonPress();
 void handleStartGame();
 void handleEndGame();
 void handleGameLights();
-bool shouldChangeLight();
 void initRandomSeed();
-unsigned long calcCurrentLightDuration();
+unsigned long calcCurrentLightDuration(int lap);
 void handleGameButtons();
-bool wasLastHitGood();
 void sortAllStations();
 
 
 void setup() {
-  Serial.begin(9600);
   initPins();
   testButtons();
   initRandomSeed();
@@ -58,17 +54,9 @@ void setup() {
 
 void loop() {
   handleStartButtonPress();
-  
   if (gameOn) {
     handleGameLights();
     handleGameButtons();
-    if (lastHit > -1) {
-      if (!wasLastHitGood()) {
-        handleEndGame();
-        return;
-      }
-      lastHit = -1;
-    }
   }
 }
 
@@ -114,7 +102,6 @@ void blinkAllLights() {
 void resetGameProps() {
   gameOn = false;
   lightLap = -1;
-  lastHit = -1;
   buttonLap = -1;
   lightOn = false;
   sortAllStations();
@@ -143,7 +130,7 @@ void handleEndGame() {
 
 void handleGameLights() {
   unsigned long now =  millis();
-  unsigned long duration = calcCurrentLightDuration();
+  unsigned long duration = calcCurrentLightDuration(lightLap);
   if (lightLap == -1) {
     lightTimeStart = now;
   }
@@ -156,19 +143,10 @@ void handleGameLights() {
   if (lightOn && now > lightTimeStart + duration) {
     digitalWrite(STATIONS[targets[lightLap]][1], LOW);
     lightOn = false;
-    delay(5);
-    lightTimeStart = millis();
+    delay(1);
+    lightTimeStart = millis() + 5;
   }
 
-}
-
-bool shouldChangeLight() {
-  if (lightLap == -1) return true;
-  unsigned long now = millis();
-  if (now > nextLightChange) {
-    return true;
-  }
-  return false;
 }
 
 void initRandomSeed() {
@@ -179,40 +157,45 @@ void initRandomSeed() {
   EEPROM.put(address, seed + 1);
 }
 
-unsigned long calcCurrentLightDuration() {
-  const unsigned long  MAX = 1000;
-  const unsigned long MIN = 200;
-  if (lightLap < 10) return MAX;
-  if (lightLap < 20) return MAX * .95;
-  if (lightLap < 30) return MAX * .9;
-  if (lightLap < 40) return MAX * .85;
-  if (lightLap < 50) return MAX * .8;
-  if (lightLap < 60) return MAX * .75;
-  if (lightLap < 70) return MAX * .7;
-  if (lightLap < 80) return MAX * .65;
-  if (lightLap < 90) return MAX * .6;
-  if (lightLap < 100) return MAX * .55;
-  if (lightLap < 120) return MAX * .5;
-  if (lightLap < 140) return MAX * .45;
-  if (lightLap < 160) return MAX * .3;
-  if (lightLap < 200) return MAX * .35;
-  if (lightLap < 250) return MAX * .3;
-  if (lightLap < 300) return MAX * .25;
-  return MIN;
+unsigned long calcCurrentLightDuration(int lap) {
+  if (lap < 10) return 1000;
+  if (lap < 20) return 950;
+  if (lap < 30) return 900;
+  if (lap < 40) return 850;
+  if (lap < 50) return 800;
+  if (lap < 60) return 750;
+  if (lap < 70) return 700;
+  if (lap < 80) return 650;
+  if (lap < 90) return 600;
+  if (lap < 100) return 550;
+  if (lap < 110) return 525;
+  if (lap < 120) return 500;
+  if (lap < 130) return 475;
+  if (lap < 140) return 450;
+  if (lap < 140) return 425;
+  if (lap < 160) return 400;
+  if (lap < 170) return 375;
+  if (lap < 180) return 350;
+  if (lap < 190) return 325;
+  if (lap < 200) return 300;
+  if (lap < 225) return 275;
+  if (lap < 250) return 250;
+  if (lap < 275) return 225;
+  return 200;
 }
 
 void handleGameButtons() {
   for (int i = 0; i < AMOUNT_OF_STATIONS; i++) {
     gameButtons[i].read();
     if (gameButtons[i].wasPressed()) {
-      lastHit = i;
       buttonLap++;
+      if (targets[buttonLap] == i) {
+        if (buttonLap == lightLap) digitalWrite(STATIONS[targets[lightLap]][1], LOW);
+        return;
+      }
+      handleEndGame();
     }
   }
-}
-
-bool wasLastHitGood() {
-  return (targets[buttonLap] == lastHit);
 }
 
 void sortAllStations() {
