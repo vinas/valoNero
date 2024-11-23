@@ -3,8 +3,9 @@
 #include "ButtonClass.h"
 
 const int AMOUNT_OF_STATIONS = 4,
-  AMOUNT_OF_PHASES = 10,
-  PHASE_BLOCK = 10,
+  START_BTN_PIN = 12,
+  GAME_LED_PIN = 13,
+  MAX_RESULTS = 500,
   STATIONS[4][2] = {
     {4, 5},
     {6, 7},
@@ -12,24 +13,16 @@ const int AMOUNT_OF_STATIONS = 4,
     {10, 11}
   };
 
-unsigned const int LIGHT_TIME_RANGE[2] = {200, 1000};
+int lightLap,
+  buttonLap,
+  targets[MAX_RESULTS],
+  lastHit;
 
-int currentTarget,
-  currentLightLap = 0,
-  currentButtonLap = 0,
-  targets[500],
-  lastHit = -1,
-  variabilityRate = (LIGHT_TIME_RANGE[1] - LIGHT_TIME_RANGE[0]) / AMOUNT_OF_PHASES;
+bool gameOn, lightOn;
 
-bool gameOn = false,
-  lightOn = false,
-  isVariableLightTimeSet = false;
+unsigned long nextLightChange, lightTimeStart;
 
-unsigned int variableLightTime = 0;
-
-unsigned long lightStartingTime = 0;
-
-Button startButton(12);
+Button startButton(START_BTN_PIN);
 
 Button gameButtons[AMOUNT_OF_STATIONS] = {
   Button(STATIONS[0][0]),
@@ -39,40 +32,42 @@ Button gameButtons[AMOUNT_OF_STATIONS] = {
 };
 
 void initPins();
-void testLeds();
 void testButtons();
 void blinkAllLights();
-void handleStartButton();
-void sortTarget();
-void initRandomSeed();
-int setVariableLightTime();
-void handleGameLights();
-void handleGameButtons();
 void resetGameProps();
+void handleStartButtonPress();
+void handleStartGame();
+void handleEndGame();
+void handleGameLights();
+bool shouldChangeLight();
+void initRandomSeed();
+unsigned long calcCurrentLightDuration();
+void handleGameButtons();
+bool wasLastHitGood();
+void sortAllStations();
+
 
 void setup() {
+  Serial.begin(9600);
   initPins();
-  testLeds();
   testButtons();
   initRandomSeed();
+  resetGameProps();
   blinkAllLights();
-  Serial.begin(9600);
 }
 
 void loop() {
-  handleStartButton();
+  handleStartButtonPress();
+  
   if (gameOn) {
     handleGameLights();
     handleGameButtons();
-
     if (lastHit > -1) {
-      if (targets[currentButtonLap] != lastHit) {
-        resetGameProps();
-        blinkAllLights();
+      if (!wasLastHitGood()) {
+        handleEndGame();
         return;
       }
       lastHit = -1;
-      currentButtonLap++;
     }
   }
 }
@@ -82,18 +77,16 @@ void initPins() {
     pinMode(STATIONS[i][0], INPUT_PULLUP);
     pinMode(STATIONS[i][1], OUTPUT);
   }
-}
-
-void testLeds() {
-  for (int i = 0; i < AMOUNT_OF_STATIONS; i++) {
-    digitalWrite(STATIONS[i][1], HIGH);
-    delay(500);
-    digitalWrite(STATIONS[i][1], LOW);
-    delay(200);
-  }
+  pinMode(START_BTN_PIN, INPUT_PULLUP);
+  pinMode(GAME_LED_PIN, OUTPUT);
 }
 
 void testButtons() {
+  digitalWrite(GAME_LED_PIN, HIGH);
+  do {
+    startButton.read();
+  } while (!startButton.wasPressed());
+  digitalWrite(GAME_LED_PIN, LOW);
   for (int i = 0; i < AMOUNT_OF_STATIONS; i++) {
     digitalWrite(STATIONS[i][1], HIGH);
     do {
@@ -104,55 +97,78 @@ void testButtons() {
 }
 
 void blinkAllLights() {
-  digitalWrite(STATIONS[0][1], HIGH);
-  digitalWrite(STATIONS[1][1], HIGH);
-  digitalWrite(STATIONS[2][1], HIGH);
-  digitalWrite(STATIONS[3][1], HIGH);
-  delay(500);
-  digitalWrite(STATIONS[0][1], LOW);
-  digitalWrite(STATIONS[1][1], LOW);
-  digitalWrite(STATIONS[2][1], LOW);
-  digitalWrite(STATIONS[3][1], LOW);
-  delay(200);
-  digitalWrite(STATIONS[0][1], HIGH);
-  digitalWrite(STATIONS[1][1], HIGH);
-  digitalWrite(STATIONS[2][1], HIGH);
-  digitalWrite(STATIONS[3][1], HIGH);
-  delay(500);
-  digitalWrite(STATIONS[0][1], LOW);
-  digitalWrite(STATIONS[1][1], LOW);
-  digitalWrite(STATIONS[2][1], LOW);
-  digitalWrite(STATIONS[3][1], LOW);
-  delay(200);
-  digitalWrite(STATIONS[0][1], HIGH);
-  digitalWrite(STATIONS[1][1], HIGH);
-  digitalWrite(STATIONS[2][1], HIGH);
-  digitalWrite(STATIONS[3][1], HIGH);
-  delay(500);
-  digitalWrite(STATIONS[0][1], LOW);
-  digitalWrite(STATIONS[1][1], LOW);
-  digitalWrite(STATIONS[2][1], LOW);
-  digitalWrite(STATIONS[3][1], LOW);
-  delay(200);
-}
-
-void handleStartButton() {
-  startButton.read();
-  if (startButton.wasPressed()) {
-    if (gameOn) {
-      blinkAllLights();
-      resetGameProps();
-      return;
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(GAME_LED_PIN, HIGH);
+    for (int x = 0; x < AMOUNT_OF_STATIONS; x++) {
+      digitalWrite(STATIONS[x][1], HIGH);
     }
-    gameOn = true;
+    delay(500);
+    digitalWrite(GAME_LED_PIN, LOW);
+    for (int x = 0; x < AMOUNT_OF_STATIONS; x++) {
+      digitalWrite(STATIONS[x][1], LOW);
+    }
+    delay(200);
   }
 }
 
-void sortTarget() {
-  int lastTarget = currentTarget;
-  do {
-    currentTarget = random(AMOUNT_OF_STATIONS);
-  } while (lastTarget == currentTarget);
+void resetGameProps() {
+  gameOn = false;
+  lightLap = -1;
+  lastHit = -1;
+  buttonLap = -1;
+  lightOn = false;
+  sortAllStations();
+}
+
+void handleStartButtonPress() {
+  startButton.read();
+  if (startButton.wasPressed()) {
+    if (gameOn) {
+      handleEndGame();
+      return;
+    }
+    handleStartGame();
+  }
+}
+
+void handleStartGame() {
+  gameOn = true;
+  digitalWrite(GAME_LED_PIN, HIGH);
+}
+
+void handleEndGame() {
+  blinkAllLights();
+  resetGameProps();
+}
+
+void handleGameLights() {
+  unsigned long now =  millis();
+  unsigned long duration = calcCurrentLightDuration();
+  if (lightLap == -1) {
+    lightTimeStart = now;
+  }
+  if (!lightOn && now >= lightTimeStart && now < lightTimeStart + duration) {
+    lightLap++;
+    digitalWrite(STATIONS[targets[lightLap]][1], HIGH);
+    lightOn = true;
+    return;
+  }
+  if (lightOn && now > lightTimeStart + duration) {
+    digitalWrite(STATIONS[targets[lightLap]][1], LOW);
+    lightOn = false;
+    delay(5);
+    lightTimeStart = millis();
+  }
+
+}
+
+bool shouldChangeLight() {
+  if (lightLap == -1) return true;
+  unsigned long now = millis();
+  if (now > nextLightChange) {
+    return true;
+  }
+  return false;
 }
 
 void initRandomSeed() {
@@ -163,39 +179,26 @@ void initRandomSeed() {
   EEPROM.put(address, seed + 1);
 }
 
-int setVariableLightTime() {
-  if (currentLightLap == 0) {
-    return LIGHT_TIME_RANGE[1];
-  }
-  if (currentLightLap > PHASE_BLOCK * AMOUNT_OF_PHASES) {
-    return LIGHT_TIME_RANGE[0];
-  }
-  if (currentLightLap % PHASE_BLOCK == 0) {
-    return variableLightTime - variabilityRate;
-  }
-  return variableLightTime;
-}
-
-void handleGameLights() {
-  if (!lightOn) {
-    sortTarget();
-    targets[currentLightLap] = currentTarget;
-    digitalWrite(STATIONS[currentTarget][1], HIGH);
-    lightStartingTime = millis();
-    lightOn = true;
-  } else {
-    if (!isVariableLightTimeSet) {
-      variableLightTime = setVariableLightTime();
-      isVariableLightTimeSet = true;
-    }
-    if (millis() - lightStartingTime > variableLightTime) {
-      digitalWrite(STATIONS[currentTarget][1], LOW);
-      lightOn = false;
-      lightStartingTime = 0;
-      currentLightLap++;
-      isVariableLightTimeSet = false;
-    }
-  }
+unsigned long calcCurrentLightDuration() {
+  const unsigned long  MAX = 1000;
+  const unsigned long MIN = 200;
+  if (lightLap < 10) return MAX;
+  if (lightLap < 20) return MAX * .95;
+  if (lightLap < 30) return MAX * .9;
+  if (lightLap < 40) return MAX * .85;
+  if (lightLap < 50) return MAX * .8;
+  if (lightLap < 60) return MAX * .75;
+  if (lightLap < 70) return MAX * .7;
+  if (lightLap < 80) return MAX * .65;
+  if (lightLap < 90) return MAX * .6;
+  if (lightLap < 100) return MAX * .55;
+  if (lightLap < 120) return MAX * .5;
+  if (lightLap < 140) return MAX * .45;
+  if (lightLap < 160) return MAX * .3;
+  if (lightLap < 200) return MAX * .35;
+  if (lightLap < 250) return MAX * .3;
+  if (lightLap < 300) return MAX * .25;
+  return MIN;
 }
 
 void handleGameButtons() {
@@ -203,17 +206,19 @@ void handleGameButtons() {
     gameButtons[i].read();
     if (gameButtons[i].wasPressed()) {
       lastHit = i;
+      buttonLap++;
     }
   }
 }
 
-void resetGameProps() {
-  gameOn = false;
-  lightOn = false;
-  isVariableLightTimeSet = false;
-  variableLightTime = 0;
-  lightStartingTime = 0;
-  currentLightLap = 0;
-  currentButtonLap = 0;
-  lastHit = -1;
+bool wasLastHitGood() {
+  return (targets[buttonLap] == lastHit);
+}
+
+void sortAllStations() {
+  for (int i = 0; i < MAX_RESULTS; i++) {
+    do {
+      targets[i] = random(AMOUNT_OF_STATIONS);
+    } while (i > 0 && targets[i - 1] == targets[i]);
+  }
 }
